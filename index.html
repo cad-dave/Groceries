@@ -790,7 +790,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.4/umd/index.min.js"></script>
 <script>
   let codeReader = null;
-  let scannerStream = null;
   let scanning = false;
 
   window.openScanner = async function() {
@@ -799,14 +798,22 @@
     scanning = true;
 
     try {
-      codeReader = new ZXingBrowser.BrowserMultiFormatReader();
       const videoEl = document.getElementById('scanner-video');
+      const hints = new Map();
+      codeReader = new ZXingBrowser.BrowserMultiFormatReader(hints);
 
-      const constraints = { video: { facingMode: 'environment' } };
-      scannerStream = await navigator.mediaDevices.getUserMedia(constraints);
-      videoEl.srcObject = scannerStream;
+      // Get back camera device id
+      const devices = await ZXingBrowser.BrowserCodeReader.listVideoInputDevices();
+      let deviceId = undefined;
+      if (devices.length > 1) {
+        // Pick the back camera (usually last or labeled 'back'/'environment')
+        const back = devices.find(d => /back|rear|environment/i.test(d.label));
+        deviceId = back ? back.deviceId : devices[devices.length - 1].deviceId;
+      } else if (devices.length === 1) {
+        deviceId = devices[0].deviceId;
+      }
 
-      codeReader.decodeFromStream(scannerStream, videoEl, async (result, err) => {
+      await codeReader.decodeFromVideoDevice(deviceId, videoEl, async (result, err) => {
         if (result && scanning) {
           scanning = false;
           const barcode = result.getText();
@@ -815,6 +822,7 @@
         }
       });
     } catch(e) {
+      console.error('Scanner error:', e);
       closeScanner();
       openManual();
       showToast('📷 Camera unavailable — enter manually');
@@ -824,12 +832,9 @@
   window.closeScanner = function() {
     scanning = false;
     document.getElementById('scanner-overlay').classList.remove('active');
-    if (scannerStream) {
-      scannerStream.getTracks().forEach(t => t.stop());
-      scannerStream = null;
-    }
     if (codeReader) { try { codeReader.reset(); } catch(e){} codeReader = null; }
-    document.getElementById('scanner-video').srcObject = null;
+    const videoEl = document.getElementById('scanner-video');
+    if (videoEl.srcObject) { videoEl.srcObject.getTracks().forEach(t => t.stop()); videoEl.srcObject = null; }
   };
 
   function setStatus(html) {
