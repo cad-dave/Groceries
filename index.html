@@ -786,55 +786,70 @@
   }
 </script>
 
-<!-- BARCODE SCANNER (ZXing) -->
-<script src="https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.4/umd/index.min.js"></script>
+<!-- BARCODE SCANNER -->
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.19.1/umd/index.min.js"></script>
 <script>
-  let codeReader = null;
+  let scanStream = null;
+  let scanInterval = null;
   let scanning = false;
 
   window.openScanner = async function() {
-    document.getElementById('scanner-overlay').classList.add('active');
-    document.getElementById('scanner-status').innerHTML = '';
+    const overlay = document.getElementById('scanner-overlay');
+    const videoEl = document.getElementById('scanner-video');
+    overlay.classList.add('active');
+    setStatus('');
     scanning = true;
 
+    // Request camera — this triggers the iOS permission prompt
     try {
-      const videoEl = document.getElementById('scanner-video');
-      const hints = new Map();
-      codeReader = new ZXingBrowser.BrowserMultiFormatReader(hints);
-
-      // Get back camera device id
-      const devices = await ZXingBrowser.BrowserCodeReader.listVideoInputDevices();
-      let deviceId = undefined;
-      if (devices.length > 1) {
-        // Pick the back camera (usually last or labeled 'back'/'environment')
-        const back = devices.find(d => /back|rear|environment/i.test(d.label));
-        deviceId = back ? back.deviceId : devices[devices.length - 1].deviceId;
-      } else if (devices.length === 1) {
-        deviceId = devices[0].deviceId;
-      }
-
-      await codeReader.decodeFromVideoDevice(deviceId, videoEl, async (result, err) => {
-        if (result && scanning) {
-          scanning = false;
-          const barcode = result.getText();
-          setStatus('<span class="spinner"></span> Looking up product…');
-          await lookupBarcode(barcode);
-        }
+      scanStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
       });
     } catch(e) {
-      console.error('Scanner error:', e);
-      closeScanner();
-      openManual();
-      showToast('📷 Camera unavailable — enter manually');
+      try {
+        scanStream = await navigator.mediaDevices.getUserMedia({ video: true });
+      } catch(e2) {
+        overlay.classList.remove('active');
+        openManual();
+        showToast('📷 Camera unavailable — enter manually');
+        return;
+      }
     }
+
+    videoEl.srcObject = scanStream;
+    videoEl.setAttribute('playsinline', true);
+    try { await videoEl.play(); } catch(e) {}
+
+    // Poll frames with ZXing
+    const reader = new ZXing.BrowserMultiFormatReader();
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+    scanInterval = setInterval(async () => {
+      if (!scanning || videoEl.readyState < 2) return;
+      try {
+        canvas.width = videoEl.videoWidth;
+        canvas.height = videoEl.videoHeight;
+        if (canvas.width === 0) return;
+        ctx.drawImage(videoEl, 0, 0);
+        const result = await reader.decodeFromCanvas(canvas);
+        if (result && scanning) {
+          scanning = false;
+          clearInterval(scanInterval);
+          setStatus('<span class="spinner"></span> Looking up product…');
+          await lookupBarcode(result.getText());
+        }
+      } catch(e) { /* not found in this frame, keep scanning */ }
+    }, 400);
   };
 
   window.closeScanner = function() {
     scanning = false;
+    clearInterval(scanInterval);
     document.getElementById('scanner-overlay').classList.remove('active');
-    if (codeReader) { try { codeReader.reset(); } catch(e){} codeReader = null; }
     const videoEl = document.getElementById('scanner-video');
-    if (videoEl.srcObject) { videoEl.srcObject.getTracks().forEach(t => t.stop()); videoEl.srcObject = null; }
+    if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
+    videoEl.srcObject = null;
   };
 
   function setStatus(html) {
@@ -842,7 +857,6 @@
   }
 
   async function lookupBarcode(upc) {
-    // Try Open Food Facts first
     try {
       const r = await fetch(`https://world.openfoodfacts.org/api/v2/product/${upc}.json`);
       const d = await r.json();
@@ -850,35 +864,21 @@
         const p = d.product;
         const name = p.product_name || p.abbreviated_product_name || '';
         const size = p.quantity || p.net_weight || '';
-        if (name) {
-          closeScanner();
-          window._addItem(name, size);
-          return;
-        }
+        if (name) { closeScanner(); window._addItem(name, size); return; }
       }
     } catch(e) {}
 
-    // Try UPC Item DB fallback
     try {
       const key = 'YOUR_UPC_ITEM_DB_KEY';
-      if (key && key !== 'YOUR_UPC_ITEM_DB_KEY') {
-        const r = await fetch(`https://api.upcitemdb.com/prod/trial/lookup?upc=${upc}`, {
-          headers: { 'user_key': key }
-        });
+      if (key !== 'YOUR_UPC_ITEM_DB_KEY') {
+        const r = await fetch(`https://api.upcitemdb.com/prod/trial/lookup?upc=${upc}`, { headers: { 'user_key': key } });
         const d = await r.json();
-        if (d.items && d.items[0]) {
-          const item = d.items[0];
-          closeScanner();
-          window._addItem(item.title, item.size || '');
-          return;
-        }
+        if (d.items && d.items[0]) { closeScanner(); window._addItem(d.items[0].title, d.items[0].size || ''); return; }
       }
     } catch(e) {}
 
-    // Both failed — open manual with hint
     closeScanner();
     showToast('⚠️ Product not found — enter name manually');
-    document.getElementById('manual-input').value = '';
     openManual();
   }
 </script>
