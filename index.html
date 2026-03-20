@@ -134,6 +134,13 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .item-name.expanded {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
   }
 
   .item-size {
@@ -680,7 +687,7 @@
     container.innerHTML = entries.map(([key, item]) => `
       <div class="item-card" id="card-${key}">
         <div class="item-info">
-          <div class="item-name">${escHtml(item.name)}</div>
+          <div class="item-name" onclick="this.classList.toggle('expanded')">${escHtml(item.name)}</div>
           ${item.size ? `<div class="item-size">${escHtml(item.size)}</div>` : ''}
         </div>
         <div class="item-actions">
