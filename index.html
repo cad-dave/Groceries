@@ -787,69 +787,57 @@
 </script>
 
 <!-- BARCODE SCANNER -->
-<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.19.1/umd/index.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script>
-  let scanStream = null;
-  let scanInterval = null;
-  let scanning = false;
+  let html5QrCode = null;
 
-  window.openScanner = async function() {
+  window.openScanner = function() {
     const overlay = document.getElementById('scanner-overlay');
-    const videoEl = document.getElementById('scanner-video');
     overlay.classList.add('active');
     setStatus('');
-    scanning = true;
 
-    // Request camera — this triggers the iOS permission prompt
-    try {
-      scanStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
-      });
-    } catch(e) {
-      try {
-        scanStream = await navigator.mediaDevices.getUserMedia({ video: true });
-      } catch(e2) {
-        overlay.classList.remove('active');
-        openManual();
-        showToast('📷 Camera unavailable — enter manually');
-        return;
-      }
+    // Replace video element with a div that html5-qrcode needs
+    const videoEl = document.getElementById('scanner-video');
+    videoEl.style.display = 'none';
+    let scanDiv = document.getElementById('scan-region');
+    if (!scanDiv) {
+      scanDiv = document.createElement('div');
+      scanDiv.id = 'scan-region';
+      scanDiv.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;';
+      overlay.insertBefore(scanDiv, overlay.firstChild);
     }
 
-    videoEl.srcObject = scanStream;
-    videoEl.setAttribute('playsinline', true);
-    try { await videoEl.play(); } catch(e) {}
+    html5QrCode = new Html5Qrcode('scan-region');
 
-    // Poll frames with ZXing
-    const reader = new ZXing.BrowserMultiFormatReader();
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const config = {
+      fps: 10,
+      qrbox: { width: 250, height: 150 },
+      aspectRatio: window.innerHeight / window.innerWidth,
+      supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA]
+    };
 
-    scanInterval = setInterval(async () => {
-      if (!scanning || videoEl.readyState < 2) return;
-      try {
-        canvas.width = videoEl.videoWidth;
-        canvas.height = videoEl.videoHeight;
-        if (canvas.width === 0) return;
-        ctx.drawImage(videoEl, 0, 0);
-        const result = await reader.decodeFromCanvas(canvas);
-        if (result && scanning) {
-          scanning = false;
-          clearInterval(scanInterval);
-          setStatus('<span class="spinner"></span> Looking up product…');
-          await lookupBarcode(result.getText());
-        }
-      } catch(e) { /* not found in this frame, keep scanning */ }
-    }, 400);
+    html5QrCode.start(
+      { facingMode: 'environment' },
+      config,
+      async (decodedText) => {
+        await lookupBarcode(decodedText);
+      },
+      (err) => { /* scan error per frame, ignore */ }
+    ).catch(err => {
+      closeScanner();
+      openManual();
+      showToast('📷 Camera unavailable — enter manually');
+    });
   };
 
   window.closeScanner = function() {
-    scanning = false;
-    clearInterval(scanInterval);
     document.getElementById('scanner-overlay').classList.remove('active');
-    const videoEl = document.getElementById('scanner-video');
-    if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
-    videoEl.srcObject = null;
+    if (html5QrCode) {
+      html5QrCode.stop().catch(() => {}).finally(() => {
+        html5QrCode.clear();
+        html5QrCode = null;
+      });
+    }
   };
 
   function setStatus(html) {
@@ -857,6 +845,9 @@
   }
 
   async function lookupBarcode(upc) {
+    if (html5QrCode) { html5QrCode.pause(); }
+    setStatus('<span class="spinner"></span> Looking up product…');
+
     try {
       const r = await fetch(`https://world.openfoodfacts.org/api/v2/product/${upc}.json`);
       const d = await r.json();
