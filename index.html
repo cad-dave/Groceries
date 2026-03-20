@@ -212,6 +212,22 @@
     text-overflow: ellipsis;
   }
 
+  .btn-readd {
+    background: var(--accent-light);
+    color: var(--accent);
+    border: 1.5px solid var(--accent);
+    border-radius: 8px;
+    padding: 5px 10px;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: 'DM Sans', sans-serif;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: background 0.15s, color 0.15s;
+  }
+  .btn-readd:active { background: var(--accent); color: white; }
+
   .history-count {
     font-family: 'DM Mono', monospace;
     font-size: 13px;
@@ -712,6 +728,7 @@
           ${escHtml(item.name)}${item.size ? ` <span style="color:var(--text2);font-size:13px">${escHtml(item.size)}</span>` : ''}
         </div>
         <span class="history-count">×${item.count}</span>
+        <button class="btn-readd" onclick="reAddItem('${escHtml(item.name)}','${escHtml(item.size||'')}')" title="Add to list">+ List</button>
       </div>
     `).join('');
   });
@@ -733,6 +750,10 @@
   }
 
   window._addItem = addItem;
+
+  window.reAddItem = function(name, size) {
+    addItem(name, size);
+  };
 
   // ---- MANUAL ENTRY ----
   window.openManual = function() {
